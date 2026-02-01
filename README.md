@@ -29,35 +29,38 @@ This project demonstrates a scalable web application with role-based workflows. 
 | **DevOps** | Docker, Docker Compose |
 
 ---
-🐳 Dockerized Architecture
+## 🐳 Dockerized Architecture
+
 The application is decomposed into three primary services communicating over a Docker bridge network:
 
-Frontend: Serves the React application (Port 5173).
+- **Frontend**: Serves the React application (Port `5173`)
+- **Backend**: Handles business logic and RESTful API requests (Port `4000`)
+- **MongoDB**: Handles persistent data storage (Port `27017`)
 
-Backend: Handles business logic and RESTful API requests (Port 4000).
+### Data Persistence
+MongoDB data is stored using a **Docker named volume**. This ensures that data remains intact even if containers are stopped, removed, or rebuilt.
 
-MongoDB: Handles persistent data storage (Port 27017).
+---
 
-Data Persistence: MongoDB data is stored using a Docker named volume. This ensures your data remains intact even if containers are stopped, removed, or rebuilt.
+## ▶️ Getting Started
 
-▶️ Getting Started
-Prerequisites
-Docker installed on your machine.
+### Prerequisites
+- Docker installed on your machine
+- Docker Compose (bundled with Docker Desktop)
 
-Docker Compose (usually bundled with Docker Desktop).
+---
 
-Installation & Execution
-Clone the Repository:
+### Installation & Execution
 
-Bash
-git clone [https://github.com/KaranGoyal134/Job-Portal.git](https://github.com/KaranGoyal134/Job-Portal.git)
+#### Clone the Repository
+git clone https://github.com/KaranGoyal134/Job-Portal.git
 cd Job-Portal
-Spin up the Containers:
 
-Bash
+## Spin up the Containers:
+
+```bash
 docker compose up -d --build
 Access the App:
-
 Frontend: http://localhost:5173
 
 Backend API: http://localhost:4000
@@ -79,16 +82,19 @@ Managing Docker Volumes for database state persistence.
 Configuring Docker Networking for secure inter-service communication.
 
 📌 Future Roadmap
-[ ] File Storage: Integrate AWS S3 or GridFS for resume uploads.
+ File Storage: Integrate AWS S3 or GridFS for resume uploads.
 
-[ ] Advanced Search: Implement job filtering by category, location, and salary.
+ Advanced Search: Implement job filtering by category, location, and salary.
 
-[ ] Notifications: Email alerts for application status updates.
+ Notifications: Email alerts for application status updates.
 
-[ ] CI/CD: Automated testing and deployment pipelines.
+ CI/CD: Automated testing and deployment pipelines.
 
 📄 License
 This project is intended for educational and demonstration purposes.
 
 👨‍💻 Author
-Karan Goyal Computer Science Student MERN Stack | Docker | DevOps
+Karan Goyal
+Computer Science Student
+MERN Stack | Docker | DevOps
+
