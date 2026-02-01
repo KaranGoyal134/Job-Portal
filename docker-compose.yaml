@@ -1,0 +1,43 @@
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "4000:4000" 
+    networks:
+      - job_portal_network
+    environment:
+      MONGO_URI: mongodb://mongo:27017/mydatabase  
+    depends_on:
+      - mongodb
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "5173:5173"  
+    networks:
+      - job_portal_network
+    environment:
+      REACT_APP_API_URL: http://backend:4000 
+
+  mongodb:
+    image: mongo:latest  
+    ports:
+      - "27017:27017"  
+    networks:
+      - job_portal_network
+    volumes:
+      - job-portal-data:/data/db 
+    healthcheck:
+      test: ["CMD","mongosh","--eval","db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+networks:
+  job_portal_network:
+    driver: bridge 
+
+volumes:
+  job-portal-data:
+    driver: local  
+
