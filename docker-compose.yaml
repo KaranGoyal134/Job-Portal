@@ -6,15 +6,13 @@ services:
       - "4000:4000" 
     networks:
       - job_portal_network
-    environment:
-      MONGO_URI: mongodb://mongo:27017/mydatabase  
     depends_on:
       - mongodb
 
   frontend:
     build: ./frontend
     ports:
-      - "5173:5173"  
+      - "80:80"  
     networks:
       - job_portal_network
     environment:
