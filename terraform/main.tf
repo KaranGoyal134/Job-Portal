@@ -233,7 +233,7 @@ data "aws_ami" "ubuntu" {
 resource "aws_launch_template" "lt" {
   name_prefix   = "job-portal-lt"
   image_id      = data.aws_ami.ubuntu.id
-  instance_type = "t2.micro"
+  instance_type = "t3.micro"
 
   iam_instance_profile {
     name = aws_iam_instance_profile.profile.name
