@@ -1,12 +1,7 @@
 name: Gitleaks Secret Scan
 
 on:
-  push:
-    branches:
-      - '**'   # runs on all branches
-  pull_request:
-    branches:
-      - 'main' 
+  workflow_call:
 
 jobs:
   gitleaks:
