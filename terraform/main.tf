@@ -58,6 +58,20 @@ resource "aws_route_table" "public_rt" {
   vpc_id = aws_vpc.main.id
 }
 
+resource "aws_route_table" "private_rt" {
+  vpc_id = aws_vpc.main.id
+}
+
+resource "aws_route_table_association" "private_assoc_1" {
+  subnet_id      = aws_subnet.private_1.id
+  route_table_id = aws_route_table.private_rt.id
+}
+
+resource "aws_route_table_association" "private_assoc_2" {
+  subnet_id      = aws_subnet.private_2.id
+  route_table_id = aws_route_table.private_rt.id
+}
+
 resource "aws_route" "internet" {
   route_table_id         = aws_route_table.public_rt.id
   destination_cidr_block = "0.0.0.0/0"
@@ -108,7 +122,10 @@ resource "aws_vpc_endpoint" "s3" {
   vpc_id       = aws_vpc.main.id
   service_name = "com.amazonaws.us-east-1.s3"
 
-  route_table_ids = [aws_route_table.public_rt.id]
+  route_table_ids = [
+    aws_route_table.public_rt.id,
+    aws_route_table.private_rt.id   
+  ]
 }
 
 resource "aws_vpc_endpoint" "ssm" {
@@ -202,9 +219,14 @@ resource "aws_lb_target_group" "tg" {
   protocol = "HTTP"
   vpc_id   = aws_vpc.main.id
 
-  health_check {
-    path = "/"
-  }
+health_check {
+  path                = "/"
+  matcher             = "200-399"
+  interval            = 30
+  timeout             = 5
+  healthy_threshold   = 2
+  unhealthy_threshold = 5
+}
 }
 
 resource "aws_lb_listener" "listener" {
@@ -235,7 +257,7 @@ resource "aws_iam_role" "ec2_role" {
 
 resource "aws_iam_role_policy_attachment" "ssm_access" {
   role       = aws_iam_role.ec2_role.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMReadOnlyAccess"
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
 resource "aws_iam_role_policy_attachment" "ecr_access" {
@@ -275,8 +297,10 @@ resource "aws_launch_template" "lt" {
 
   user_data = base64encode(<<EOF
 #!/bin/bash
+
+set -e
 apt update -y
-apt install -y docker.io docker-compose awscli
+apt install -y docker.io docker-compose-plugin awscli
 
 systemctl start docker
 systemctl enable docker
@@ -335,7 +359,8 @@ volumes:
 EOC
 
 cd /home/ubuntu
-docker-compose up -d
+sleep 20
+docker compose up -d
 EOF
 )
 
@@ -365,6 +390,7 @@ resource "aws_autoscaling_group" "asg" {
   }
 
   target_group_arns = [aws_lb_target_group.tg.arn]
+  health_check_grace_period = 300
 }
 
 # -------------------------
