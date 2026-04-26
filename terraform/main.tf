@@ -312,6 +312,11 @@ set -e
 apt update -y
 apt install -y docker.io docker-compose-plugin awscli
 
+snap install amazon-ssm-agent --classic || true
+
+systemctl enable snap.amazon-ssm-agent.amazon-ssm-agent.service || true
+systemctl start snap.amazon-ssm-agent.amazon-ssm-agent.service || true
+
 systemctl start docker
 systemctl enable docker
 
