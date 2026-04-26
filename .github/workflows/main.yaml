@@ -2,12 +2,86 @@ name: Main CI Pipeline
 
 on:
   push:
-    branches:
-      - '**'
+    branches: ['main']
   pull_request:
-    branches:
-      - 'main'
+    branches: ['main']
 
 jobs:
   gitleaks:
     uses: ./.github/workflows/gitleaks.yml
+
+  deploy:
+    needs: gitleaks
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+
+    steps:
+      # -------------------------
+      # Checkout
+      # -------------------------
+      - uses: actions/checkout@v4
+
+      # -------------------------
+      # AWS Auth
+      # -------------------------
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          region: us-east-1
+
+      # -------------------------
+      # Terraform Setup
+      # -------------------------
+      - uses: hashicorp/setup-terraform@v3
+
+      # -------------------------
+      # STEP 1: Terraform (Infra with safe tag)
+      # -------------------------
+      - name: Terraform Init
+        working-directory: ./terraform
+        run: terraform init
+
+      - name: Terraform Apply (Infra)
+        working-directory: ./terraform
+        run: terraform apply -auto-approve -var="image_tag=latest"
+
+      # -------------------------
+      # STEP 2: Get Outputs
+      # -------------------------
+      - name: Get Outputs
+        working-directory: ./terraform
+        run: |
+          echo "ECR_REPO=$(terraform output -raw ecr_url)" >> $GITHUB_ENV
+          echo "ASG_NAME=$(terraform output -raw asg_name)" >> $GITHUB_ENV
+
+      # -------------------------
+      # STEP 3: Login to ECR
+      # -------------------------
+      - name: Login to ECR
+        run: |
+          REGISTRY=$(echo "$ECR_REPO" | cut -d'/' -f1)
+          aws ecr get-login-password --region us-east-1 \
+          | docker login --username AWS --password-stdin $REGISTRY
+
+      # -------------------------
+      # STEP 4: Build & Push Images
+      # -------------------------
+      - name: Build & Push
+        run: |
+          docker build -t job-portal:$GITHUB_SHA .
+
+          docker tag job-portal:$GITHUB_SHA $ECR_REPO:$GITHUB_SHA
+          docker tag job-portal:$GITHUB_SHA $ECR_REPO:latest
+
+          docker push $ECR_REPO:$GITHUB_SHA
+          docker push $ECR_REPO:latest
+
+      # -------------------------
+      # STEP 5: Deploy (ASG Refresh)
+      # -------------------------
+      - name: Refresh ASG
+        if: success()
+        run: |
+          aws autoscaling start-instance-refresh \
+          --auto-scaling-group-name $ASG_NAME
