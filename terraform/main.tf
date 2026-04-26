@@ -279,26 +279,13 @@ resource "aws_iam_instance_profile" "profile" {
   role = aws_iam_role.ec2_role.name
 }
 
-# -------------------------
-# AMI (Ubuntu)
-# -------------------------
-data "aws_ami" "ubuntu" {
-  most_recent = true
-
-  owners = ["099720109477"]
-
-  filter {
-    name   = "name"
-    values = ["ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*"]
-  }
-}
 
 # -------------------------
 # Launch Template
 # -------------------------
 resource "aws_launch_template" "lt" {
   name_prefix   = "job-portal-lt"
-  image_id      = data.aws_ami.ubuntu.id
+  image_id      = "ami-0ec10929233384c7f"
   instance_type = "t3.micro"
 
   iam_instance_profile {
@@ -359,7 +346,7 @@ services:
     ports:
       - "80:80"
     environment:
-      REACT_APP_API_URL: http://backend:4000
+      REACT_APP_API_URL: http://${aws_lb.alb.dns_name}
     depends_on:
       - backend
 
