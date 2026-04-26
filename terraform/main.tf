@@ -10,6 +10,9 @@ data "aws_availability_zones" "azs" {}
 resource "aws_vpc" "main" {
   cidr_block = "10.0.0.0/16"
 
+  enable_dns_hostnames = true
+  enable_dns_support   = true
+
   tags = {
     Name = "job-portal-vpc"
   }
@@ -99,6 +102,13 @@ resource "aws_security_group" "vpce_sg" {
     to_port         = 443
     protocol        = "tcp"
     security_groups = [aws_security_group.ec2_sg.id]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
   }
 }
 
