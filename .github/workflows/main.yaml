@@ -47,7 +47,8 @@ jobs:
       - name: Get Outputs
         working-directory: ./terraform
         run: |
-          echo "ECR_REPO=$(terraform output -raw ecr_url)" >> $GITHUB_ENV
+          echo "FRONTEND_REPO=$(terraform output -raw frontend_ecr_url)" >> $GITHUB_ENV
+          echo "BACKEND_REPO=$(terraform output -raw backend_ecr_url)" >> $GITHUB_ENV
           echo "ASG_NAME=$(terraform output -raw asg_name)" >> $GITHUB_ENV
 
       # -------------------------
@@ -55,22 +56,36 @@ jobs:
       # -------------------------
       - name: Login to ECR
         run: |
-          REGISTRY=$(echo "$ECR_REPO" | cut -d'/' -f1)
+          REGISTRY=$(echo "$FRONTEND_REPO" | cut -d'/' -f1)
           aws ecr get-login-password --region us-east-1 \
           | docker login --username AWS --password-stdin $REGISTRY
 
       # -------------------------
       # STEP 4: Build & Push Images
       # -------------------------
-      - name: Build & Push
+      - name: Build & Push Images
         run: |
-          docker build -t job-portal:$GITHUB_SHA .
+          # -------------------------
+          # FRONTEND
+          # -------------------------
+          docker build -t frontend:$GITHUB_SHA ./frontend
 
-          docker tag job-portal:$GITHUB_SHA $ECR_REPO:$GITHUB_SHA
-          docker tag job-portal:$GITHUB_SHA $ECR_REPO:latest
+          docker tag frontend:$GITHUB_SHA $FRONTEND_REPO:$GITHUB_SHA
+          docker tag frontend:$GITHUB_SHA $FRONTEND_REPO:latest
 
-          docker push $ECR_REPO:$GITHUB_SHA
-          docker push $ECR_REPO:latest
+          docker push $FRONTEND_REPO:$GITHUB_SHA
+          docker push $FRONTEND_REPO:latest
+
+          # -------------------------
+          # BACKEND
+          # -------------------------
+          docker build -t backend:$GITHUB_SHA ./backend
+
+          docker tag backend:$GITHUB_SHA $BACKEND_REPO:$GITHUB_SHA
+          docker tag backend:$GITHUB_SHA $BACKEND_REPO:latest
+
+          docker push $BACKEND_REPO:$GITHUB_SHA
+          docker push $BACKEND_REPO:latest
 
       # -------------------------
       # STEP 5: Deploy (ASG Refresh)
