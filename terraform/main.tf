@@ -111,11 +111,40 @@ resource "aws_vpc_endpoint" "s3" {
   route_table_ids = [aws_route_table.public_rt.id]
 }
 
+resource "aws_vpc_endpoint" "ssm" {
+  vpc_id            = aws_vpc.main.id
+  service_name      = "com.amazonaws.us-east-1.ssm"
+  vpc_endpoint_type = "Interface"
+  subnet_ids        = [aws_subnet.private_1.id, aws_subnet.private_2.id]
+  security_group_ids = [aws_security_group.vpce_sg.id]
+}
+
+resource "aws_vpc_endpoint" "ssmmessages" {
+  vpc_id            = aws_vpc.main.id
+  service_name      = "com.amazonaws.us-east-1.ssmmessages"
+  vpc_endpoint_type = "Interface"
+  subnet_ids        = [aws_subnet.private_1.id, aws_subnet.private_2.id]
+  security_group_ids = [aws_security_group.vpce_sg.id]
+}
+
+resource "aws_vpc_endpoint" "ec2messages" {
+  vpc_id            = aws_vpc.main.id
+  service_name      = "com.amazonaws.us-east-1.ec2messages"
+  vpc_endpoint_type = "Interface"
+  subnet_ids        = [aws_subnet.private_1.id, aws_subnet.private_2.id]
+  security_group_ids = [aws_security_group.vpce_sg.id]
+}
+
 # -------------------------
 # ECR
 # -------------------------
-resource "aws_ecr_repository" "repo" {
-  name         = "job-portal"
+resource "aws_ecr_repository" "frontend" {
+  name         = "job-portal-frontend"
+  force_delete = true
+}
+
+resource "aws_ecr_repository" "backend" {
+  name         = "job-portal-backend"
   force_delete = true
 }
 
@@ -204,6 +233,11 @@ resource "aws_iam_role" "ec2_role" {
   })
 }
 
+resource "aws_iam_role_policy_attachment" "ssm_access" {
+  role       = aws_iam_role.ec2_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMReadOnlyAccess"
+}
+
 resource "aws_iam_role_policy_attachment" "ecr_access" {
   role       = aws_iam_role.ec2_role.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
@@ -242,19 +276,68 @@ resource "aws_launch_template" "lt" {
   user_data = base64encode(<<EOF
 #!/bin/bash
 apt update -y
-apt install -y docker.io awscli
+apt install -y docker.io docker-compose awscli
 
 systemctl start docker
 systemctl enable docker
 
+# Login to ECR (use frontend repo just to get registry)
 aws ecr get-login-password --region us-east-1 \
- | docker login --username AWS --password-stdin ${aws_ecr_repository.repo.repository_url}
+ | docker login --username AWS --password-stdin \
+$(echo ${aws_ecr_repository.frontend.repository_url} | cut -d'/' -f1)
+DB_URL=$(aws ssm get-parameter --name "/job-portal/DB_URL" --with-decryption --query "Parameter.Value" --output text)
+JWT_SECRET=$(aws ssm get-parameter --name "/job-portal/JWT_SECRET_KEY" --with-decryption --query "Parameter.Value" --output text)
+CLOUDINARY_API_KEY=$(aws ssm get-parameter --name "/job-portal/CLOUDINARY_API_KEY" --with-decryption --query "Parameter.Value" --output text)
+CLOUDINARY_API_SECRET=$(aws ssm get-parameter --name "/job-portal/CLOUDINARY_API_SECRET" --with-decryption --query "Parameter.Value" --output text)
+CLOUDINARY_CLOUD_NAME=$(aws ssm get-parameter --name "/job-portal/CLOUDINARY_CLOUD_NAME" --with-decryption --query "Parameter.Value" --output text)
 
-docker pull ${aws_ecr_repository.repo.repository_url}:${var.image_tag}
+# Create docker-compose file
+cat <<EOC > /home/ubuntu/docker-compose.yml
 
-docker run -d -p 80:80 ${aws_ecr_repository.repo.repository_url}:${var.image_tag}
+services:
+  backend:
+    restart: always
+    image: ${aws_ecr_repository.backend.repository_url}:latest
+    ports:
+      - "4000:4000"
+    environment:
+      DB_URL: ${DB_URL}
+      CLOUDINARY_API_KEY: ${CLOUDINARY_API_KEY}
+      CLOUDINARY_API_SECRET: ${CLOUDINARY_API_SECRET}
+      CLOUDINARY_CLOUD_NAME: ${CLOUDINARY_CLOUD_NAME}
+      JWT_SECRET_KEY: ${JWT_SECRET}
+      PORT: 4000
+      FRONTEND_URL: http://${aws_lb.alb.dns_name}
+      JWT_EXPIRE: 7d
+      COOKIE_EXPIRE: 7
+      NODE_ENV: production
+    depends_on:
+      - mongodb
+
+  frontend:
+    restart: always
+    image: ${aws_ecr_repository.frontend.repository_url}:latest
+    ports:
+      - "80:80"
+    environment:
+      REACT_APP_API_URL: http://backend:4000
+    depends_on:
+      - backend
+
+  mongodb:
+    restart: always
+    image: mongo:latest
+    volumes:
+      - job-portal-data:/data/db
+
+volumes:
+  job-portal-data:
+EOC
+
+cd /home/ubuntu
+docker-compose up -d
 EOF
-  )
+)
 
   network_interfaces {
     associate_public_ip_address = false
@@ -304,8 +387,12 @@ resource "aws_autoscaling_policy" "cpu" {
 # -------------------------
 # Outputs
 # -------------------------
-output "ecr_url" {
-  value = aws_ecr_repository.repo.repository_url
+output "frontend_ecr_url" {
+  value = aws_ecr_repository.frontend.repository_url
+}
+
+output "backend_ecr_url" {
+  value = aws_ecr_repository.backend.repository_url
 }
 
 output "asg_name" {
