@@ -1,26 +1,20 @@
-name: Gitleaks Secret Scan
+name: Gitleaks Scan
 
 on:
   workflow_call:
 
 jobs:
-  gitleaks:
+  scan:
     runs-on: ubuntu-latest
 
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0   
+    permissions:
+      contents: read
+      pull-requests: read
 
-      - name: Run Gitleaks scan
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Gitleaks
         uses: gitleaks/gitleaks-action@v2
         with:
-          args: detect --source . --verbose --redact
-
-      - name: Upload Gitleaks report
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: gitleaks-report
-          path: results.sarif
+          github_token: ${{ secrets.GITHUB_TOKEN }}
