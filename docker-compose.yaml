@@ -1,5 +1,6 @@
 services:
   backend:
+    env_file: .env
     build: ./backend
     ports:
       - "4000:4000" 
