@@ -238,6 +238,31 @@ resource "aws_iam_role_policy_attachment" "ssm_access" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
+resource "aws_iam_role_policy" "ssm_parameter_access" {
+  name   = "ssm-parameter-access"
+  role   = aws_iam_role.ec2_role.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "ssm:GetParameter",
+          "ssm:GetParameters"
+        ]
+        Resource = "arn:aws:ssm:us-east-1:*:parameter/job-portal/*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "kms:Decrypt"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
 resource "aws_iam_role_policy_attachment" "ecr_access" {
   role       = aws_iam_role.ec2_role.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
@@ -265,11 +290,15 @@ resource "aws_launch_template" "lt" {
 
 set -e
 apt update -y
-apt install -y docker.io docker-compose-plugin awscli amazon-ssm-agent
+apt install -y docker.io awscli curl
+mkdir -p /usr/local/lib/docker/cli-plugins
+curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/lib/docker/cli-plugins/docker-compose
+chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+snap install amazon-ssm-agent --classic
 
 systemctl daemon-reload
-systemctl enable amazon-ssm-agent
-systemctl start amazon-ssm-agent
+systemctl enable snap.amazon-ssm-agent.amazon-ssm-agent.service
+systemctl start snap.amazon-ssm-agent.amazon-ssm-agent.service
 
 systemctl start docker
 systemctl enable docker
@@ -355,7 +384,7 @@ services:
     ports:
       - "80:80"
     environment:
-      REACT_APP_API_URL: http://${aws_lb.alb.dns_name}
+      REACT_APP_API_URL: http://backend:4000
     depends_on:
       backend:
         condition: service_healthy
@@ -402,8 +431,8 @@ USERDATA
 # -------------------------
 resource "aws_autoscaling_group" "asg" {
   name             = "job-portal-asg"
-  desired_capacity = 2
-  max_size         = 4
+  desired_capacity = 1
+  max_size         = 1
   min_size         = 1
 
   vpc_zone_identifier = [
