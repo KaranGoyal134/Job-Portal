@@ -55,6 +55,30 @@ resource "aws_internet_gateway" "igw" {
 }
 
 # -------------------------
+# NAT Gateway (for private subnets)
+# -------------------------
+resource "aws_eip" "nat_eip" {
+  domain = "vpc"
+
+  tags = {
+    Name = "job-portal-nat-eip"
+  }
+
+  depends_on = [aws_internet_gateway.igw]
+}
+
+resource "aws_nat_gateway" "nat" {
+  allocation_id = aws_eip.nat_eip.id
+  subnet_id     = aws_subnet.public_1.id
+
+  tags = {
+    Name = "job-portal-nat"
+  }
+
+  depends_on = [aws_internet_gateway.igw]
+}
+
+# -------------------------
 # Route Table (Public)
 # -------------------------
 resource "aws_route_table" "public_rt" {
@@ -81,6 +105,13 @@ resource "aws_route" "internet" {
   gateway_id             = aws_internet_gateway.igw.id
 }
 
+# Add NAT route to private route table
+resource "aws_route" "private_nat" {
+  route_table_id         = aws_route_table.private_rt.id
+  destination_cidr_block = "0.0.0.0/0"
+  nat_gateway_id         = aws_nat_gateway.nat.id
+}
+
 resource "aws_route_table_association" "public_assoc_1" {
   subnet_id      = aws_subnet.public_1.id
   route_table_id = aws_route_table.public_rt.id
@@ -89,77 +120,6 @@ resource "aws_route_table_association" "public_assoc_1" {
 resource "aws_route_table_association" "public_assoc_2" {
   subnet_id      = aws_subnet.public_2.id
   route_table_id = aws_route_table.public_rt.id
-}
-
-# -------------------------
-# VPC Endpoints (NO NAT)
-# -------------------------
-resource "aws_security_group" "vpce_sg" {
-  vpc_id = aws_vpc.main.id
-
-  ingress {
-    from_port       = 443
-    to_port         = 443
-    protocol        = "tcp"
-    security_groups = [aws_security_group.ec2_sg.id]
-  }
-
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-}
-
-resource "aws_vpc_endpoint" "ecr_api" {
-  vpc_id              = aws_vpc.main.id
-  service_name        = "com.amazonaws.us-east-1.ecr.api"
-  vpc_endpoint_type   = "Interface"
-  subnet_ids          = [aws_subnet.private_1.id, aws_subnet.private_2.id]
-  security_group_ids  = [aws_security_group.vpce_sg.id]
-}
-
-resource "aws_vpc_endpoint" "ecr_dkr" {
-  vpc_id              = aws_vpc.main.id
-  service_name        = "com.amazonaws.us-east-1.ecr.dkr"
-  vpc_endpoint_type   = "Interface"
-  subnet_ids          = [aws_subnet.private_1.id, aws_subnet.private_2.id]
-  security_group_ids  = [aws_security_group.vpce_sg.id]
-}
-
-resource "aws_vpc_endpoint" "s3" {
-  vpc_id       = aws_vpc.main.id
-  service_name = "com.amazonaws.us-east-1.s3"
-
-  route_table_ids = [
-    aws_route_table.public_rt.id,
-    aws_route_table.private_rt.id   
-  ]
-}
-
-resource "aws_vpc_endpoint" "ssm" {
-  vpc_id            = aws_vpc.main.id
-  service_name      = "com.amazonaws.us-east-1.ssm"
-  vpc_endpoint_type = "Interface"
-  subnet_ids        = [aws_subnet.private_1.id, aws_subnet.private_2.id]
-  security_group_ids = [aws_security_group.vpce_sg.id]
-}
-
-resource "aws_vpc_endpoint" "ssmmessages" {
-  vpc_id            = aws_vpc.main.id
-  service_name      = "com.amazonaws.us-east-1.ssmmessages"
-  vpc_endpoint_type = "Interface"
-  subnet_ids        = [aws_subnet.private_1.id, aws_subnet.private_2.id]
-  security_group_ids = [aws_security_group.vpce_sg.id]
-}
-
-resource "aws_vpc_endpoint" "ec2messages" {
-  vpc_id            = aws_vpc.main.id
-  service_name      = "com.amazonaws.us-east-1.ec2messages"
-  vpc_endpoint_type = "Interface"
-  subnet_ids        = [aws_subnet.private_1.id, aws_subnet.private_2.id]
-  security_group_ids = [aws_security_group.vpce_sg.id]
 }
 
 # -------------------------
@@ -206,6 +166,13 @@ resource "aws_security_group" "ec2_sg" {
     security_groups = [aws_security_group.alb_sg.id]
   }
 
+  ingress {
+    from_port   = 4000
+    to_port     = 4000
+    protocol    = "tcp"
+    cidr_blocks = ["10.0.0.0/16"]
+  }
+
   egress {
     from_port   = 0
     to_port     = 0
@@ -225,18 +192,19 @@ resource "aws_lb" "alb" {
 }
 
 resource "aws_lb_target_group" "tg" {
+  name     = "job-portal-tg"
   port     = 80
   protocol = "HTTP"
   vpc_id   = aws_vpc.main.id
 
-health_check {
-  path                = "/"
-  matcher             = "200-399"
-  interval            = 30
-  timeout             = 5
-  healthy_threshold   = 2
-  unhealthy_threshold = 5
-}
+  health_check {
+    path                = "/"
+    matcher             = "200-399"
+    interval            = 30
+    timeout             = 5
+    healthy_threshold   = 2
+    unhealthy_threshold = 3
+  }
 }
 
 resource "aws_lb_listener" "listener" {
@@ -292,78 +260,135 @@ resource "aws_launch_template" "lt" {
     name = aws_iam_instance_profile.profile.name
   }
 
-  user_data = base64encode(<<EOF
+  user_data = base64encode(<<-USERDATA
 #!/bin/bash
 
 set -e
 apt update -y
-apt install -y docker.io docker-compose-plugin awscli
+apt install -y docker.io docker-compose-plugin awscli amazon-ssm-agent
 
-snap install amazon-ssm-agent --classic || true
-
-systemctl enable snap.amazon-ssm-agent.amazon-ssm-agent.service || true
-systemctl start snap.amazon-ssm-agent.amazon-ssm-agent.service || true
+systemctl daemon-reload
+systemctl enable amazon-ssm-agent
+systemctl start amazon-ssm-agent
 
 systemctl start docker
 systemctl enable docker
 
-# Login to ECR (use frontend repo just to get registry)
-aws ecr get-login-password --region us-east-1 \
- | docker login --username AWS --password-stdin \
-$(echo ${aws_ecr_repository.frontend.repository_url} | cut -d'/' -f1)
-DB_URL=$(aws ssm get-parameter --name "/job-portal/DB_URL" --with-decryption --query "Parameter.Value" --output text)
-JWT_SECRET=$(aws ssm get-parameter --name "/job-portal/JWT_SECRET_KEY" --with-decryption --query "Parameter.Value" --output text)
-CLOUDINARY_API_KEY=$(aws ssm get-parameter --name "/job-portal/CLOUDINARY_API_KEY" --with-decryption --query "Parameter.Value" --output text)
-CLOUDINARY_API_SECRET=$(aws ssm get-parameter --name "/job-portal/CLOUDINARY_API_SECRET" --with-decryption --query "Parameter.Value" --output text)
-CLOUDINARY_CLOUD_NAME=$(aws ssm get-parameter --name "/job-portal/CLOUDINARY_CLOUD_NAME" --with-decryption --query "Parameter.Value" --output text)
+usermod -aG docker ubuntu
+
+# Retry logic for ECR login
+MAX_RETRIES=5
+RETRY_COUNT=0
+until [ $RETRY_COUNT -ge $MAX_RETRIES ]; do
+  aws ecr get-login-password --region us-east-1 \
+   | docker login --username AWS --password-stdin \
+  $(echo ${aws_ecr_repository.frontend.repository_url} | cut -d'/' -f1) && break
+  RETRY_COUNT=$((RETRY_COUNT+1))
+  if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+    sleep 10
+  fi
+done
+
+if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
+  echo "ECR login failed after $MAX_RETRIES attempts"
+  exit 1
+fi
+
+# Fetch parameters from SSM
+export DB_URL=$(aws ssm get-parameter --name "/job-portal/DB_URL" --with-decryption --query "Parameter.Value" --output text)
+export JWT_SECRET=$(aws ssm get-parameter --name "/job-portal/JWT_SECRET_KEY" --with-decryption --query "Parameter.Value" --output text)
+export CLOUDINARY_API_KEY=$(aws ssm get-parameter --name "/job-portal/CLOUDINARY_API_KEY" --with-decryption --query "Parameter.Value" --output text)
+export CLOUDINARY_API_SECRET=$(aws ssm get-parameter --name "/job-portal/CLOUDINARY_API_SECRET" --with-decryption --query "Parameter.Value" --output text)
+export CLOUDINARY_CLOUD_NAME=$(aws ssm get-parameter --name "/job-portal/CLOUDINARY_CLOUD_NAME" --with-decryption --query "Parameter.Value" --output text)
 
 # Create docker-compose file
 cat <<EOC > /home/ubuntu/docker-compose.yml
+version: '3.8'
 
 services:
-  backend:
+  mongodb:
+    image: mongo:7.0
+    container_name: job-portal-mongodb
     restart: always
+    volumes:
+      - job-portal-data:/data/db
+    networks:
+      - job-portal-network
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost/test --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
     image: ${aws_ecr_repository.backend.repository_url}:latest
-    ports:
-      - "4000:4000"
+    container_name: job-portal-backend
+    restart: always
     environment:
-      DB_URL: $${DB_URL}
-      CLOUDINARY_API_KEY: $${CLOUDINARY_API_KEY}
-      CLOUDINARY_API_SECRET: $${CLOUDINARY_API_SECRET}
-      CLOUDINARY_CLOUD_NAME: $${CLOUDINARY_CLOUD_NAME}
-      JWT_SECRET_KEY: $${JWT_SECRET}
+      DB_URL: ${DB_URL}
+      CLOUDINARY_API_KEY: ${CLOUDINARY_API_KEY}
+      CLOUDINARY_API_SECRET: ${CLOUDINARY_API_SECRET}
+      CLOUDINARY_CLOUD_NAME: ${CLOUDINARY_CLOUD_NAME}
+      JWT_SECRET_KEY: ${JWT_SECRET}
       PORT: 4000
       FRONTEND_URL: http://${aws_lb.alb.dns_name}
       JWT_EXPIRE: 7d
       COOKIE_EXPIRE: 7
       NODE_ENV: production
+    ports:
+      - "4000:4000"
     depends_on:
-      - mongodb
+      mongodb:
+        condition: service_healthy
+    networks:
+      - job-portal-network
+    healthcheck:
+      test: curl -f http://localhost:4000/health || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   frontend:
-    restart: always
     image: ${aws_ecr_repository.frontend.repository_url}:latest
+    container_name: job-portal-frontend
+    restart: always
     ports:
       - "80:80"
     environment:
       REACT_APP_API_URL: http://${aws_lb.alb.dns_name}
     depends_on:
-      - backend
-
-  mongodb:
-    restart: always
-    image: mongo:latest
-    volumes:
-      - job-portal-data:/data/db
+      backend:
+        condition: service_healthy
+    networks:
+      - job-portal-network
+    healthcheck:
+      test: curl -f http://localhost:80 || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
 volumes:
   job-portal-data:
+
+networks:
+  job-portal-network:
+    driver: bridge
 EOC
 
 cd /home/ubuntu
-sleep 20
+
+# Wait for services to be ready (increased from 20s to 90s)
+echo "Waiting for services to initialize..."
+sleep 90
+
 docker compose up -d
-EOF
+
+# Verify services are running
+echo "Verifying services..."
+sleep 30
+docker compose ps
+
+USERDATA
 )
 
   network_interfaces {
@@ -391,7 +416,8 @@ resource "aws_autoscaling_group" "asg" {
     version = "$Latest"
   }
 
-  target_group_arns = [aws_lb_target_group.tg.arn]
+  target_group_arns          = [aws_lb_target_group.tg.arn]
+  health_check_type         = "ELB"
   health_check_grace_period = 300
 }
 
@@ -415,18 +441,24 @@ resource "aws_autoscaling_policy" "cpu" {
 # -------------------------
 # Outputs
 # -------------------------
-output "frontend_ecr_url" {
-  value = aws_ecr_repository.frontend.repository_url
+output "nat_gateway_ip" {
+  value       = aws_eip.nat_eip.public_ip
+  description = "Public IP of NAT Gateway"
 }
 
 output "backend_ecr_url" {
   value = aws_ecr_repository.backend.repository_url
 }
 
-output "asg_name" {
-  value = aws_autoscaling_group.asg.name
+output "frontend_ecr_url" {
+  value = aws_ecr_repository.frontend.repository_url
 }
 
 output "alb_dns" {
-  value = aws_lb.alb.dns_name
+  value       = aws_lb.alb.dns_name
+  description = "ALB DNS name - access application here"
+}
+
+output "asg_name" {
+  value = aws_autoscaling_group.asg.name
 }
