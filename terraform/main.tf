@@ -325,11 +325,11 @@ services:
     container_name: job-portal-backend
     restart: always
     environment:
-      DB_URL: ${DB_URL}
-      CLOUDINARY_API_KEY: ${CLOUDINARY_API_KEY}
-      CLOUDINARY_API_SECRET: ${CLOUDINARY_API_SECRET}
-      CLOUDINARY_CLOUD_NAME: ${CLOUDINARY_CLOUD_NAME}
-      JWT_SECRET_KEY: ${JWT_SECRET}
+      DB_URL: $${DB_URL}
+      CLOUDINARY_API_KEY: $${CLOUDINARY_API_KEY}
+      CLOUDINARY_API_SECRET: $${CLOUDINARY_API_SECRET}
+      CLOUDINARY_CLOUD_NAME: $${CLOUDINARY_CLOUD_NAME}
+      JWT_SECRET_KEY: $${JWT_SECRET}
       PORT: 4000
       FRONTEND_URL: http://${aws_lb.alb.dns_name}
       JWT_EXPIRE: 7d
